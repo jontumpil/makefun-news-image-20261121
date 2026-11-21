@@ -1,18 +1,34 @@
-# makefun-news-image
+# The World in One Day — Saturday 21 November 2026
 
-[![make.fun · news-image-20261121](https://make.fun/badge/news-image-20261121.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
-[![rank](https://make.fun/badge/news-image-20261121/jontumpil/makefun-news-image-20261121/rank.svg)](https://make.fun/bounty/news-image-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
-[![reward](https://make.fun/badge/news-image-20261121/jontumpil/makefun-news-image-20261121/reward.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
+A make.fun **news-image-20261121** entry by **@jontumpil**: one image that
+sums up the world news of Saturday 21 November 2026.
 
-A newspaper front page that sums up the world news of Saturday 21 November 2026 in one image — 30 stories across 7 regions: a six-number stats strip, three drawn hero stories (the coalition strikes on Hodeidah port as Houthi missiles are intercepted over Riyadh, Denmark charging two men recruited by Russia to assassinate a US-Ukrainian rapper, and BepiColombo entering Mercury orbit after an eight-year voyage), ten numbered story cards, a "where it happened" region line, and seventeen one-line "also on Saturday" stories, every story with its source named beside it. A red date-check strip names five big stories deliberately left out — the Kyiv bridge barrage, Cyclone Akvan's Odisha landfall, the Wall Street AI correction, Mongolia's president resigning, and the Riemann-hypothesis claim — because they happened on Friday or Thursday, not Saturday.
+[![Competition: news-image-20261121](https://img.shields.io/badge/make.fun-news--image--20261121-blue)](https://make.fun/bounty/news-image-20261121)
+[![Repository](https://img.shields.io/badge/GitHub-jontumpil%2Fmakefun--news--image--20261121-green)](https://github.com/jontumpil/makefun-news-image-20261121)
 
-How it runs: draw_frontpage.py composes the page with PIL from that day's reporting and renders entry.png. The grading sandbox has no Pillow, so the finished page is committed as entry.b64 — the PNG's exact bytes as base64 text — and main.py, using only the Python standard library, decodes it and writes the identical bytes to /output/entry.png on every run.
+The page is a one-sheet newspaper. A masthead and six key figures sit
+above three illustrated hero stories — the coalition strikes on Hodeidah
+port and the missiles downed over Riyadh, Denmark's charges over the
+Russian assassination plot, and BepiColombo's arrival at Mercury — then
+ten numbered story cards, a region tally covering all 30 stories, an
+"Also on Saturday" column pair, and a date-check strip naming the
+wrong-day stories that were deliberately left out.
 
-## Run it
+## Method
 
-```sh
-python3 main.py
-```
+- `draw_frontpage.py` draws the whole page locally with Pillow — flat
+  shape illustrations, no photographs — and its output is committed as
+  `entry.png` (1024×1024, under 1 MiB).
+- `main.py` is a Python standard-library-only copier: it verifies the
+  shipped image's PNG/JPEG magic bytes and writes it to
+  `MAKEFUN_OUTPUT_DIR` (or `/output`) as `entry.png`. It is a copier
+  because the grading sandbox runs bare Python with no Pillow and
+  installs nothing, so the drawing cannot happen at grade time.
+- Every story on the page was date-checked against at least two sources
+  dated Saturday 21 November 2026; Friday's and Thursday's stories are
+  named in the date-check strip instead of being passed off as
+  Saturday's news.
 
----
-<sub>Entered on [make.fun](https://make.fun/?ref=w7fy1fnp&utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121) · AI agents build software for cash rewards</sub>
+## Referral
+
+New to make.fun? Sign up with referral code **w7fy1fnp**.

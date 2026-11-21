@@ -1,616 +1,597 @@
 #!/usr/bin/env python3
-"""news-image-20261121 entry: draw the day's front page.
+"""Draw the front page for the make.fun news-image-20261121 entry.
 
-draw_frontpage.py composes a newspaper front page summing up the
-world news of Saturday 21 November 2026 with PIL and writes the
-finished page to entry.png beside this file. The committed entry.b64
-holds those exact bytes as base64 text; main.py (standard library
-only) decodes it back to /output/entry.png in the grading sandbox,
-which ships a bare Python with no Pillow. Pure Python + PIL here,
-no network, fully deterministic (no timestamps, no randomness):
-two runs give byte-identical output.
+The page is a one-sheet newspaper, "The World in One Day", summing up the
+world news of Saturday 21 November 2026 on a 1024x1024 cream sheet:
+a masthead, a strip of six key figures, three illustrated hero stories,
+ten numbered story cards, a region tally, an "also on Saturday" column
+pair, a date-check strip and a footer.
 
-Page contents (30 stories, all Saturday 21 Nov 2026, sources named):
-  * a six-number stats strip,
-  * 3 drawn hero stories (Hodeidah port strikes, the Denmark-Russia
-    assassination plot, BepiColombo reaching Mercury),
-  * 10 numbered story cards (Zelenskyy-Trump, Iran, COP31 overtime,
-    Gupta sentence, daraxonrasib, GTA VI, Ukraine food aid, Iraq
-    pipeline CEO, Bali daycare, Kyiv bridge),
-  * a "where it happened" region line,
-  * 17 one-line "also on Saturday" stories in two columns,
-  * a red DATE CHECK strip naming five big stories deliberately
-    left out because they happened on Friday or Thursday (the Kyiv
-    bridge barrage, Cyclone Akvan, the Wall Street AI correction,
-    Mongolia's president resigning, the Riemann-hypothesis claim).
+Run it with Pillow available; it writes entry.png next to itself.
+The shipped entry.png is exactly this program's output. The program is
+deterministic: fixed geometry, fixed text, no randomness, no clock.
 """
-
-import math
-import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-W = H = 1024
-M = 30                      # page margin
-CW = W - 2 * M              # content width = 964
+# ---------------------------------------------------------------- canvas
 
-PAPER = (247, 243, 234)
-INK = (26, 26, 26)
-NAVY = (18, 38, 74)
-TEAL = (14, 58, 70)
-DARK = (22, 22, 32)
-RED = (178, 34, 44)
-GOLD = (216, 164, 60)
-GREY = (96, 96, 96)
-CARD = (255, 255, 255)
-LINE = (210, 202, 186)
-BAND = (238, 231, 216)
-TINT = (253, 241, 238)
-LIGHT = (219, 228, 244)
+PAGE_W = 1024
+PAGE_H = 1024
+MARGIN = 28
+CONTENT_R = PAGE_W - MARGIN  # right edge of the content column
 
-SB = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-SR = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-SI = "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf"
-FB = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
+PAPER = (247, 241, 222)
+INK = (36, 31, 25)
+FAINT = (110, 100, 84)
+RED = (172, 30, 28)
+NAVY = (18, 32, 64)
+NAVY_CARD = (24, 40, 78)
+TEAL_CARD = (12, 90, 90)
+DARK_CARD = (25, 23, 40)
+GOLD = (233, 198, 102)
+CARD_BG = (253, 250, 240)
+CARD_LINE = (196, 186, 152)
+BEIGE = (233, 221, 189)
+DATE_BG = (250, 237, 229)
+WHITE = (252, 252, 248)
+
+FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
+SANS = FONT_DIR + "DejaVuSans.ttf"
+SANS_BOLD = FONT_DIR + "DejaVuSans-Bold.ttf"
+SERIF_ITALIC = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
+SERIF_BOLD = FONT_DIR + "DejaVuSerif-Bold.ttf"
 
 
 def font(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(draw, text, fnt, width):
-    words, lines, cur = text.split(), [], ""
-    for w in words:
-        t = (cur + " " + w).strip()
-        if draw.textlength(t, font=fnt) <= width:
-            cur = t
+# ---------------------------------------------------------------- text
+
+def text_w(draw, s, fnt):
+    box = draw.textbbox((0, 0), s, font=fnt)
+    return box[2] - box[0]
+
+
+def wrap(draw, s, fnt, width):
+    """Greedy word wrap; returns the list of lines that fit `width`."""
+    lines = []
+    current = ""
+    for word in s.split():
+        trial = word if not current else current + " " + word
+        if text_w(draw, trial, fnt) <= width:
+            current = trial
         else:
-            lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     return lines
 
 
-def text_block(draw, xy, text, fnt, fill, width, leading=1.12,
-               max_lines=None):
-    x, y = xy
-    lines = wrap(draw, text, fnt, width)
-    if max_lines:
-        lines = lines[:max_lines]
-    asc, desc = fnt.getmetrics()
-    step = int((asc + desc) * leading)
-    for ln in lines:
-        draw.text((x, y), ln, font=fnt, fill=fill)
-        y += step
+def draw_centered(draw, cx, y, s, fnt, fill):
+    draw.text((cx - text_w(draw, s, fnt) / 2, y), s, font=fnt, fill=fill)
+
+
+def draw_tracked(draw, cx, y, s, fnt, fill, tracking):
+    """Draw text centred on cx with extra space between the letters."""
+    widths = [text_w(draw, ch, fnt) for ch in s]
+    total = sum(widths) + tracking * (len(s) - 1)
+    x = cx - total / 2
+    for ch, w in zip(s, widths):
+        draw.text((x, y), ch, font=fnt, fill=fill)
+        x += w + tracking
+    return total
+
+
+def draw_block(draw, x, y, lines, fnt, fill, leading):
+    for line in lines:
+        draw.text((x, y), line, font=fnt, fill=fill)
+        y += leading
     return y
 
 
-def spaced(draw, xy, text, fnt, fill, tracking=5):
-    x, y = xy
-    for ch in text:
-        draw.text((x, y), ch, font=fnt, fill=fill)
-        x += draw.textlength(ch, font=fnt) + tracking
-    return x
+# ---------------------------------------------------------------- icons
+# Every icon is drawn on its own transparent tile and pasted onto the
+# page, so rotated pieces (atom rings, the capsule, the gavel) are easy:
+# draw flat, rotate the tile, paste with its own alpha as the mask.
+
+def new_tile(w, h):
+    tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    return tile, ImageDraw.Draw(tile)
 
 
-def star(draw, cx, cy, r, fill):
+def paste_rotated(page, tile, angle, cx, cy):
+    spun = tile.rotate(angle, expand=True, resample=Image.BICUBIC)
+    page.paste(spun, (int(cx - spun.width / 2), int(cy - spun.height / 2)), spun)
+
+
+def starburst(draw, cx, cy, r_out, r_in, fill, points=8):
+    """A small jagged star, used for flashes and missile bursts."""
+    import math
+
     pts = []
-    for i in range(10):
-        ang = -math.pi / 2 + i * math.pi / 5
-        rad = r if i % 2 == 0 else r * 0.45
-        pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
+    for i in range(points * 2):
+        r = r_out if i % 2 == 0 else r_in
+        a = math.pi * i / points - math.pi / 2
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     draw.polygon(pts, fill=fill)
 
 
-def _bezier(p0, p1, p2, n=20):
-    pts = []
-    for i in range(n + 1):
-        t = i / n
-        mt = 1 - t
-        pts.append((mt * mt * p0[0] + 2 * mt * t * p1[0] + t * t * p2[0],
-                    mt * mt * p0[1] + 2 * mt * t * p1[1] + t * t * p2[1]))
-    return pts
+def icon_quote(page, cx, cy, colour):
+    tile, d = new_tile(46, 40)
+    d.rounded_rectangle([4, 3, 42, 28], radius=6, fill=colour)
+    d.polygon([(12, 27), (12, 37), (24, 27)], fill=colour)
+    for qx in (15, 27):
+        d.ellipse([qx, 10, qx + 5, 15], fill=WHITE)
+        d.polygon([(qx - 1, 19), (qx + 6, 19), (qx + 3, 12)], fill=WHITE)
+    page.paste(tile, (int(cx - 23), int(cy - 20)), tile)
 
 
-def chip(draw, cx, cy, num, fill=RED):
-    r = 15
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill)
-    draw.text((cx, cy - 1), str(num), font=font(SB, 17),
-              fill=(255, 255, 255), anchor="mm")
+def icon_atom(page, cx, cy, colour):
+    ring, d = new_tile(48, 48)
+    d.ellipse([3, 16, 45, 32], outline=colour, width=3)
+    for angle in (0, 60, 120):
+        paste_rotated(page, ring, angle, cx, cy)
+    dot, d2 = new_tile(48, 48)
+    d2.ellipse([20, 20, 28, 28], fill=colour)
+    page.paste(dot, (int(cx - 24), int(cy - 24)), dot)
 
 
-# ------------------------------------------------------------- scenes
-def scene_port(d, x, y, w, h):
-    col = (170, 200, 235)
-    sea = y + h - 12
-    # water with wave ticks
-    d.rectangle([x, sea, x + w, y + h], fill=(43, 78, 128))
-    for i, wfx in enumerate((0.08, 0.38, 0.62, 0.88)):
-        wy = sea + 4 + (i % 2) * 3
-        d.line([x + w * wfx, wy, x + w * wfx + 14, wy],
-               fill=(110, 160, 215), width=2)
-    # container ship, left of centre: hull, stacked boxes, bridge tower
-    hx0, hx1 = x + w * 0.06, x + w * 0.44
-    d.polygon([(hx0, sea - 8), (hx1, sea - 8), (hx1 - 8, sea + 1),
-               (hx0 + 5, sea + 1)], fill=(200, 200, 214))
-    bw_, bh_ = w * 0.105, 7
-    for fx, lvl, c in ((0.09, 0, GOLD), (0.09, 1, (178, 90, 80)),
-                       (0.20, 0, (120, 150, 190)), (0.20, 1, GOLD),
-                       (0.31, 0, (178, 90, 80))):
-        bx = x + w * fx
-        by = sea - 8 - (lvl + 1) * bh_
-        d.rectangle([bx, by, bx + bw_, by + bh_ - 1], fill=c)
-    d.rectangle([hx1 - 12, sea - 22, hx1 - 3, sea - 8],
-                fill=(200, 200, 214))
-    # two portal cranes over the quay, right side
-    for fx in (0.58, 0.80):
-        cx = x + w * fx
-        d.line([cx, sea, cx, y + 6], fill=col, width=3)
-        d.line([cx + 16, sea, cx + 16, y + 6], fill=col, width=3)
-        d.line([cx - 8, y + 6, cx + 26, y + 6], fill=col, width=3)
-    # a container hanging from the first crane's hook
-    hx_ = x + w * 0.58 + 10
-    d.line([hx_, y + 6, hx_, y + 20], fill=col, width=1)
-    d.rectangle([hx_ - 7, y + 20, hx_ + 7, y + 27], fill=GOLD)
-    # two missiles arcing in from the top right, starbursts at the quay
-    shots = (((0.99, 0.00), (0.94, 0.30), (0.86, 0.62)),
-             ((0.90, 0.00), (0.80, 0.26), (0.70, 0.60)))
-    for p0, p1, p2 in shots:
-        pts = _bezier((x + w * p0[0], y + h * p0[1]),
-                      (x + w * p1[0], y + h * p1[1]),
-                      (x + w * p2[0], y + h * p2[1]))
-        d.line(pts, fill=(240, 120, 60), width=2)
-        ex, ey = pts[-1]
-        star(d, ex, ey, 7, GOLD)
-        star(d, ex, ey, 3.5, RED)
+def icon_globe_clock(page, cx, cy, colour):
+    tile, d = new_tile(48, 48)
+    d.ellipse([3, 3, 39, 39], outline=colour, width=3)
+    d.ellipse([14, 3, 28, 39], outline=colour, width=2)
+    d.line([3, 21, 39, 21], fill=colour, width=2)
+    d.ellipse([26, 26, 46, 46], fill=WHITE, outline=colour, width=3)
+    d.line([36, 36, 36, 30], fill=colour, width=2)
+    d.line([36, 36, 41, 38], fill=colour, width=2)
+    page.paste(tile, (int(cx - 24), int(cy - 24)), tile)
 
 
-def scene_plot(d, x, y, w, h):
-    # Danish flag on a pole, left
-    px = x + w * 0.10
-    d.line([px, y + 4, px, y + h - 4], fill=(220, 220, 228), width=3)
-    fx0, fy0 = px + 2, y + 6
-    d.rectangle([fx0, fy0, fx0 + 74, fy0 + 34], fill=(198, 44, 54))
-    d.rectangle([fx0 + 20, fy0, fx0 + 30, fy0 + 34],
-                fill=(255, 255, 255))
-    d.rectangle([fx0, fy0 + 14, fx0 + 74, fy0 + 20],
-                fill=(255, 255, 255))
-    # press microphone, right of centre
-    mx = x + w * 0.62
-    my = y + 6
-    d.rounded_rectangle([mx, my, mx + 26, my + 32], 12,
-                        fill=(205, 205, 218))
-    for gy in (my + 8, my + 15, my + 22):
-        d.line([mx + 4, gy, mx + 22, gy], fill=(90, 90, 110), width=2)
-    d.arc([mx - 7, my + 12, mx + 33, my + 46], 20, 160,
-          fill=(205, 205, 218), width=3)
-    d.line([mx + 13, my + 42, mx + 13, y + h - 3],
-           fill=(205, 205, 218), width=3)
-    d.line([mx + 2, y + h - 3, mx + 24, y + h - 3],
-           fill=(205, 205, 218), width=3)
+def icon_bars(page, cx, cy, colour):
+    tile, d = new_tile(44, 44)
+    d.rectangle([5, 5, 39, 39], outline=colour, width=3)
+    for bx in (13, 21, 29):
+        d.line([bx, 5, bx, 39], fill=colour, width=4)
+    d.line([5, 22, 39, 22], fill=colour, width=3)
+    page.paste(tile, (int(cx - 22), int(cy - 22)), tile)
+
+
+def icon_capsule(page, cx, cy, colour):
+    tile, d = new_tile(52, 24)
+    d.rounded_rectangle([2, 3, 50, 21], radius=10, outline=colour, width=3)
+    d.rounded_rectangle([4, 5, 26, 19], radius=8, fill=colour)
+    paste_rotated(page, tile, -38, cx, cy)
+
+
+def icon_gamepad(page, cx, cy, colour):
+    tile, d = new_tile(50, 38)
+    d.rounded_rectangle([2, 6, 48, 30], radius=12, fill=colour)
+    d.rectangle([11, 14, 23, 18], fill=WHITE)
+    d.rectangle([15, 10, 19, 26], fill=WHITE)
+    d.ellipse([32, 11, 38, 17], fill=WHITE)
+    d.ellipse([39, 19, 45, 25], fill=WHITE)
+    page.paste(tile, (int(cx - 25), int(cy - 19)), tile)
+
+
+def icon_wheat(page, cx, cy, colour):
+    tile, d = new_tile(40, 48)
+    d.line([20, 46, 20, 8], fill=colour, width=3)
+    # grains: small leaf shapes leaning off the stalk in pairs
+    for i, gy in enumerate((12, 20, 28, 36)):
+        d.polygon([(20, gy + 8), (8, gy), (20, gy - 4)], outline=colour, width=2)
+        d.polygon([(20, gy + 8), (32, gy), (20, gy - 4)], outline=colour, width=2)
+    d.polygon([(20, 10), (15, 0), (20, 3), (25, 0)], fill=colour)
+    page.paste(tile, (int(cx - 20), int(cy - 24)), tile)
+
+
+def icon_pumpjack(page, cx, cy, colour):
+    tile, d = new_tile(50, 44)
+    d.line([4, 40, 46, 40], fill=colour, width=3)
+    d.polygon([(18, 40), (26, 40), (22, 14)], outline=colour, width=3)
+    d.line([6, 10, 42, 16], fill=colour, width=4)
+    d.polygon([(42, 16), (48, 22), (42, 26), (38, 18)], fill=colour)
+    d.line([9, 12, 9, 24], fill=colour, width=3)
+    d.rectangle([5, 24, 13, 30], outline=colour, width=2)
+    d.ellipse([28, 32, 38, 40], outline=colour, width=2)
+    page.paste(tile, (int(cx - 25), int(cy - 22)), tile)
+
+
+def icon_gavel(page, cx, cy, colour):
+    tile, d = new_tile(52, 52)
+    # head: two striking blocks joined by a band, drawn flat then tilted
+    d.rectangle([8, 6, 22, 20], fill=colour)
+    d.rectangle([30, 6, 44, 20], fill=colour)
+    d.rectangle([21, 9, 31, 17], fill=colour)
+    d.line([26, 17, 40, 44], fill=colour, width=5)
+    paste_rotated(page, tile, -28, cx, cy)
+    base, d2 = new_tile(52, 52)
+    d2.rectangle([12, 45, 42, 49], fill=colour)
+    page.paste(base, (int(cx - 26), int(cy - 26)), base)
+
+
+def icon_bridge(page, cx, cy, colour):
+    tile, d = new_tile(52, 44)
+    deck_y = 30
+    d.line([2, deck_y, 50, deck_y], fill=colour, width=4)
+    for tx in (14, 38):
+        d.line([tx, 8, tx, 40], fill=colour, width=3)
+
+    def cable_y(x):
+        # parabola sagging between the tower tops (14, 8) and (38, 8)
+        if x <= 14:
+            return 16 - (x - 2) * 8 / 12
+        if x >= 38:
+            return 8 + (x - 38) * 8 / 12
+        t = (x - 26) / 12
+        return 8 + 11 * (1 - t * t)
+
+    pts = [(x, cable_y(x)) for x in range(2, 51)]
+    d.line(pts, fill=colour, width=2)
+    for hx in (8, 20, 26, 32, 44):
+        d.line([hx, cable_y(hx), hx, deck_y], fill=colour, width=1)
+    d.line([2, 40, 50, 40], fill=colour, width=2)
+    page.paste(tile, (int(cx - 26), int(cy - 22)), tile)
+
+
+# ---------------------------------------------------------------- heroes
+
+def scene_port(page, x, y, w, h):
+    """Hodeidah port: cranes, a container ship, two missile arcs."""
+    d = ImageDraw.Draw(page)
+    d.rectangle([x, y, x + w, y + h], fill=(42, 62, 112))
+    sea_y = y + h - 26
+    d.rectangle([x, sea_y, x + w, y + h], fill=(15, 32, 70))
+    # two portal cranes
+    for gx in (x + 26, x + 118):
+        d.line([gx, sea_y, gx, y + 14], fill=(210, 214, 220), width=4)
+        d.line([gx + 34, sea_y, gx + 34, y + 14], fill=(210, 214, 220), width=4)
+        d.line([gx - 8, y + 14, gx + 62, y + 14], fill=(210, 214, 220), width=4)
+        d.line([gx, y + 44, gx + 34, y + 14], fill=(160, 166, 176), width=2)
+        d.line([gx, y + 44, gx + 34, y + 70], fill=(160, 166, 176), width=2)
+    # container hanging from the second crane
+    d.line([x + 152, y + 14, x + 152, y + 38], fill=(220, 224, 230), width=2)
+    d.rectangle([x + 138, y + 38, x + 166, y + 54], fill=(206, 120, 44))
+    # container ship at the right
+    hull_y = sea_y + 6
+    d.polygon([(x + 196, hull_y), (x + 288, hull_y), (x + 278, hull_y + 14),
+               (x + 204, hull_y + 14)], fill=(120, 44, 38))
+    cols = [(196, 92, 60), (70, 130, 180), (196, 92, 60), (88, 150, 96)]
+    for i, c in enumerate(cols):
+        d.rectangle([x + 202 + i * 20, hull_y - 14, x + 220 + i * 20, hull_y - 2],
+                    fill=c)
+    d.rectangle([x + 262, hull_y - 26, x + 276, hull_y - 2], fill=(210, 214, 220))
+    # two orange missile arcs ending in bursts over the port
+    import math
+
+    for (sx, ex, peak) in ((x + 292, x + 96, y + 4), (x + 292, x + 44, y + 18)):
+        sy, ey = sea_y - 8, y + 34
+        cy = 2 * peak - 0.5 * (sy + ey)  # quadratic Bezier control height
+        pts = []
+        for t_i in range(25):
+            t = t_i / 24
+            px = sx + (ex - sx) * t
+            py = (1 - t) ** 2 * sy + 2 * (1 - t) * t * cy + t ** 2 * ey
+            pts.append((px, py))
+        d.line(pts, fill=(255, 150, 50), width=3)
+        starburst(d, ex, ey, 13, 5, (255, 190, 70))
+    d.line([x, sea_y, x + w, sea_y], fill=(120, 160, 210), width=2)
+
+
+def scene_denmark(page, x, y, w, h):
+    """A Danish flag on a pole beside a press microphone, flash stars."""
+    d = ImageDraw.Draw(page)
+    d.rectangle([x, y, x + w, y + h], fill=(30, 122, 122))
+    d.rectangle([x, y + h - 16, x + w, y + h], fill=(9, 66, 66))
+    # flag pole and Danish flag
+    pole_x = x + 52
+    d.line([pole_x, y + 10, pole_x, y + h - 14], fill=(225, 228, 230), width=4)
+    fx, fy, fw, fh = pole_x + 4, y + 12, 96, 62
+    d.rectangle([fx, fy, fx + fw, fy + fh], fill=(198, 32, 44))
+    d.rectangle([fx + 26, fy, fx + 38, fy + fh], fill=WHITE)
+    d.rectangle([fx, fy + 25, fx + fw, fy + 37], fill=WHITE)
+    # press microphone, tilted, with a foam head and a press cube
+    mic, md = new_tile(120, 120)
+    md.rounded_rectangle([46, 6, 74, 52], radius=12, fill=(38, 38, 44))
+    for gy in (16, 26, 36):
+        md.line([50, gy, 70, gy], fill=(120, 124, 132), width=2)
+    md.rectangle([55, 52, 65, 66], fill=(90, 92, 100))
+    md.rectangle([42, 66, 78, 92], fill=(240, 240, 244))
+    md.rectangle([48, 72, 72, 86], outline=(198, 32, 44), width=3)
+    md.line([60, 92, 60, 112], fill=(38, 38, 44), width=5)
+    paste_rotated(page, mic, 24, x + 208, y + 62)
     # camera flashes
-    star(d, x + w * 0.88, y + 12, 6, GOLD)
-    star(d, x + w * 0.94, y + 27, 4, (255, 255, 255))
+    starburst(d, x + 128, y + 26, 12, 4, (255, 244, 180), points=6)
+    starburst(d, x + 262, y + 18, 10, 4, (255, 244, 180), points=6)
+    starburst(d, x + 282, y + 96, 9, 3, (255, 255, 255), points=6)
 
 
-def scene_mercury(d, x, y, w, h):
-    # sun, top-left, with rays
-    sx, sy = x + 20, y + 14
-    d.ellipse([sx - 8, sy - 8, sx + 8, sy + 8], fill=GOLD)
-    for ang in range(0, 360, 45):
-        a = math.radians(ang)
-        d.line([sx + 11 * math.cos(a), sy + 11 * math.sin(a),
-                sx + 15 * math.cos(a), sy + 15 * math.sin(a)],
-               fill=GOLD, width=2)
-    # Mercury: big cratered disc, right
-    cx, cy, r = x + w - 52, y + h // 2, 26
-    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(178, 166, 150))
-    for dx, dy, cr in ((-10, -8, 6), (6, -14, 4), (12, 4, 7),
-                       (-4, 10, 5), (-16, 6, 3), (2, -2, 3)):
-        d.ellipse([cx + dx - cr, cy + dy - cr * 0.8,
-                   cx + dx + cr, cy + dy + cr * 0.8],
-                  outline=(128, 116, 100), width=2)
-    d.arc([cx - r, cy - r, cx + r, cy + r], 100, 260,
-          fill=(110, 100, 88), width=3)
-    # BepiColombo orbiter: body, dish, two solar-panel wings
-    ox, oy = x + w * 0.36, y + h * 0.44
-    d.polygon([(ox - 5, oy - 3), (ox - 26, oy - 8), (ox - 26, oy + 2),
-               (ox - 5, oy + 2)], fill=(70, 110, 190))
-    d.polygon([(ox + 5, oy - 3), (ox + 26, oy - 8), (ox + 26, oy + 2),
-               (ox + 5, oy + 2)], fill=(70, 110, 190))
-    d.rectangle([ox - 5, oy - 5, ox + 5, oy + 5], fill=(205, 205, 218))
-    d.arc([ox - 6, oy - 16, ox + 6, oy - 4], 180, 360,
-          fill=(205, 205, 218), width=2)
-    # dashed flight path curving in from the left edge to the planet
-    pts = _bezier((x + 2, y + h * 0.78), (x + w * 0.34, y + h * 0.86),
-                  (cx - r - 6, cy + 12), n=40)
-    for i in range(0, len(pts), 4):
-        px_, py_ = pts[i]
-        d.ellipse([px_ - 1.2, py_ - 1.2, px_ + 1.2, py_ + 1.2],
-                  fill=(150, 150, 170))
+def scene_mercury(page, x, y, w, h):
+    """BepiColombo: a small orbiter on a dashed path to a cratered disc."""
+    d = ImageDraw.Draw(page)
+    d.rectangle([x, y, x + w, y + h], fill=(13, 11, 27))
+    for (sx, sy, r) in ((30, 18, 2), (86, 40, 1), (140, 14, 2), (196, 30, 1),
+                        (238, 58, 2), (52, 84, 1), (110, 96, 2), (268, 10, 1)):
+        d.ellipse([x + sx - r, y + sy - r, x + sx + r, y + sy + r],
+                  fill=(210, 214, 235))
+    # sun in the top-left corner, with short rays
+    sun_c = (x + 25, y + 23)
+    d.ellipse([sun_c[0] - 15, sun_c[1] - 15, sun_c[0] + 15, sun_c[1] + 15],
+              fill=(250, 205, 80))
+    import math
+
+    for k in range(6):
+        a = math.radians(15 + k * 58)
+        d.line([sun_c[0] + 20 * math.cos(a), sun_c[1] + 20 * math.sin(a),
+                sun_c[0] + 28 * math.cos(a), sun_c[1] + 28 * math.sin(a)],
+               fill=(250, 205, 80), width=3)
+    # Mercury: a big cratered disc, lower right
+    mx, my, mr = x + 214, y + 76, 44
+    d.ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=(168, 160, 150))
+    for (cx, cy, cr, tone) in ((196, 62, 11, (146, 137, 126)),
+                               (232, 92, 15, (150, 141, 130)),
+                               (208, 104, 8, (142, 133, 122)),
+                               (244, 56, 7, (152, 143, 132)),
+                               (188, 88, 6, (148, 139, 128))):
+        d.ellipse([x + cx - cr, y + cy - cr, x + cx + cr, y + cy + cr],
+                  fill=tone, outline=(120, 112, 102), width=2)
+    # dashed trajectory from the orbiter toward Mercury
+    for t_i in range(14):
+        t = t_i / 13
+        px = x + 84 + (mx - mr - x - 78) * t
+        py = y + 66 + (my - 16 - y - 66) * t + 14 * (t - t * t) * 4 / 4
+        if t_i % 2 == 0:
+            d.ellipse([px - 2, py - 2, px + 2, py + 2], fill=(240, 240, 250))
+    # the orbiter: bus, dish and two blue panel wings
+    ox, oy = x + 66, y + 58
+    d.rectangle([ox - 26, oy - 7, ox - 8, oy + 7], fill=(64, 110, 205))
+    d.rectangle([ox + 8, oy - 7, ox + 26, oy + 7], fill=(64, 110, 205))
+    d.rectangle([ox - 8, oy - 9, ox + 8, oy + 9], fill=(226, 228, 232))
+    d.polygon([(ox, oy - 9), (ox - 10, oy - 20), (ox + 4, oy - 16)],
+              fill=(240, 240, 244))
+    d.line([ox, oy + 9, ox, oy + 18], fill=(200, 204, 210), width=2)
 
 
-# --------------------------------------------------------- card icons
-# Each icon draws in a 42x44 box at (x, y): flat shapes, 2-3 colours,
-# no text. Same visual language as the hero scenes.
-BLUE = (43, 92, 168)
-GREEN = (110, 150, 75)
-DGREEN = (84, 120, 56)
-STEEL = (105, 105, 115)
-SKY = (168, 208, 224)
+# ---------------------------------------------------------------- content
 
-
-def icon_quote(d, x, y):
-    # speech bubble with two gold quote marks
-    d.rounded_rectangle([x + 4, y + 7, x + 36, y + 29], 6, fill=NAVY)
-    d.polygon([(x + 12, y + 29), (x + 12, y + 38), (x + 22, y + 29)],
-              fill=NAVY)
-    for qx in (x + 12, x + 23):
-        d.rounded_rectangle([qx, y + 13, qx + 5, y + 20], 2, fill=GOLD)
-        d.polygon([(qx, y + 20), (qx + 5, y + 20), (qx + 1, y + 24)],
-                  fill=GOLD)
-
-
-def icon_atom(d, x, y):
-    cx, cy = x + 21, y + 22
-    d.ellipse([cx - 21, cy - 8, cx + 21, cy + 8], outline=TEAL, width=2)
-    d.ellipse([cx - 8, cy - 19, cx + 8, cy + 19], outline=BLUE, width=2)
-    d.ellipse([cx - 15, cy - 15, cx + 15, cy + 15], outline=TEAL,
-              width=1)
-    d.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=GOLD)
-    for ex, ey in ((cx + 19, cy - 5), (cx - 6, cy - 17),
-                   (cx - 13, cy + 10)):
-        d.ellipse([ex - 2.4, ey - 2.4, ex + 2.4, ey + 2.4], fill=RED)
-
-
-def icon_cop(d, x, y):
-    cx, cy = x + 16, y + 20
-    d.ellipse([cx - 13, cy - 13, cx + 13, cy + 13], fill=SKY,
-              outline=TEAL, width=2)
-    d.ellipse([cx - 5, cy - 13, cx + 5, cy + 13], outline=TEAL, width=1)
-    d.line([cx - 13, cy, cx + 13, cy], fill=TEAL, width=1)
-    # clock overlapping the globe's lower right: talks in overtime
-    kx, ky = x + 32, y + 33
-    d.ellipse([kx - 8, ky - 8, kx + 8, ky + 8], fill=(255, 255, 255),
-              outline=RED, width=2)
-    d.line([kx, ky, kx, ky - 5], fill=INK, width=2)
-    d.line([kx, ky, kx + 4, ky + 3], fill=INK, width=2)
-
-
-def icon_prison(d, x, y):
-    for i in range(5):
-        bx = x + 5 + i * 8
-        d.rectangle([bx, y + 8, bx + 4, y + 36], fill=STEEL)
-    d.rectangle([x + 3, y + 6, x + 39, y + 10], fill=INK)
-    d.rectangle([x + 3, y + 34, x + 39, y + 38], fill=INK)
-
-
-def icon_capsule(d, x, y):
-    # horizontal pill: red left half, white right half
-    d.rounded_rectangle([x + 3, y + 14, x + 39, y + 30], 8, fill=RED)
-    d.rounded_rectangle([x + 21, y + 14, x + 39, y + 30], 8,
-                        fill=(255, 255, 255))
-    d.rectangle([x + 21, y + 15, x + 27, y + 29], fill=(255, 255, 255))
-    d.rounded_rectangle([x + 3, y + 14, x + 39, y + 30], 8, outline=INK,
-                        width=2)
-    d.line([x + 9, y + 19, x + 17, y + 19], fill=(255, 255, 255),
-           width=2)
-
-
-def icon_gamepad(d, x, y):
-    d.rounded_rectangle([x + 3, y + 13, x + 39, y + 33], 10, fill=DARK)
-    d.rectangle([x + 9, y + 20, x + 17, y + 26], fill=(255, 255, 255))
-    d.rectangle([x + 11, y + 18, x + 15, y + 28], fill=(255, 255, 255))
-    d.ellipse([x + 26, y + 18, x + 31, y + 23], fill=RED)
-    d.ellipse([x + 31, y + 24, x + 36, y + 29], fill=GOLD)
-
-
-def icon_wheat(d, x, y):
-    cx = x + 21
-    d.line([cx, y + 42, cx, y + 10], fill=DGREEN, width=2)
-    for i, gy in enumerate((34, 27, 20, 13)):
-        spread = 9 - i
-        d.polygon([(cx, y + gy + 6), (cx - spread - 3, y + gy - 2),
-                   (cx, y + gy - 4)], fill=GOLD)
-        d.polygon([(cx, y + gy + 6), (cx + spread + 3, y + gy - 2),
-                   (cx, y + gy - 4)], fill=GOLD)
-    for dx in (-6, 0, 6):
-        d.line([cx, y + 9, cx + dx, y + 1], fill=GOLD, width=1)
-
-
-def icon_pumpjack(d, x, y):
-    d.line([x + 2, y + 39, x + 41, y + 39], fill=INK, width=2)
-    d.line([x + 9, y + 39, x + 17, y + 15], fill=NAVY, width=3)
-    d.line([x + 25, y + 39, x + 17, y + 15], fill=NAVY, width=3)
-    d.line([x + 12, y + 28, x + 22, y + 28], fill=NAVY, width=2)
-    d.line([x + 5, y + 13, x + 38, y + 19], fill=INK, width=4)
-    d.polygon([(x + 36, y + 17), (x + 41, y + 19), (x + 39, y + 26),
-               (x + 35, y + 22)], fill=INK)
-    d.line([x + 38, y + 26, x + 38, y + 39], fill=INK, width=2)
-    d.rectangle([x + 2, y + 15, x + 8, y + 21], fill=NAVY)
-    d.ellipse([x + 14, y + 12, x + 20, y + 18], fill=GOLD)
-
-
-def icon_gavel(d, x, y):
-    cx, cy = x + 15, y + 13
-    dx, dy = 0.866, -0.5          # head axis
-    px, py = 0.5, 0.866           # head perpendicular
-    hl, hh2 = 9.5, 3.6
-    corners = [(cx + dx * hl + px * hh2, cy + dy * hl + py * hh2),
-               (cx + dx * hl - px * hh2, cy + dy * hl - py * hh2),
-               (cx - dx * hl - px * hh2, cy - dy * hl - py * hh2),
-               (cx - dx * hl + px * hh2, cy - dy * hl + py * hh2)]
-    d.polygon(corners, fill=NAVY)
-    for s in (7, -7):
-        d.line([(cx + dx * s + px * hh2, cy + dy * s + py * hh2),
-                (cx + dx * s - px * hh2, cy + dy * s - py * hh2)],
-               fill=GOLD, width=2)
-    d.line([x + 17, y + 16, x + 28, y + 30], fill=GOLD, width=4)
-    d.rounded_rectangle([x + 23, y + 34, x + 41, y + 40], 2, fill=INK)
-
-
-def icon_bridge(d, x, y):
-    col = BLUE
-    deck = y + 30
-    for fxp in (0.30, 0.70):
-        px = x + 42 * fxp
-        d.rectangle([px - 2, y + 8, px + 2, deck], fill=col)
-    cable = [(x + 42 * fx, deck + dy) for fx, dy in
-             ((0.02, -6), (0.18, -13), (0.30, -18), (0.50, -11),
-              (0.70, -18), (0.82, -13), (0.98, -6))]
-    d.line(cable, fill=col, width=2)
-    for hx_, hy_ in (cable[1], cable[3], cable[5]):
-        d.line([hx_, hy_, hx_, deck], fill=col, width=1)
-    d.line([x + 2, deck, x + 40, deck], fill=col, width=4)
-    d.line([x + 4, y + 38, x + 16, y + 38], fill=SKY, width=2)
-    d.line([x + 24, y + 40, x + 36, y + 40], fill=SKY, width=2)
-
-
-ICONS = {4: icon_quote, 5: icon_atom, 6: icon_cop, 7: icon_prison,
-         8: icon_capsule, 9: icon_gamepad, 10: icon_wheat,
-         11: icon_pumpjack, 12: icon_gavel, 13: icon_bridge}
-
-
-# --------------------------------------------------------------- data
 STATS = [
-    ("3", "Houthi missiles downed over Riyadh"),
-    ("41", "killed in 24 hours, Houthis say"),
-    ("2", "Danes charged in the plot"),
-    ("8 yrs", "BepiColombo's voyage to Mercury"),
-    ("235", "months in prison for Gupta"),
-    ("1st", "dual-orbit Mercury mission"),
+    "3 Houthi missiles downed over Riyadh",
+    "41 killed in 24 h, Houthis say",
+    "2 Danes charged",
+    "8 yrs BepiColombo's voyage",
+    "235 months for Gupta",
+    "1st dual-orbit Mercury mission",
 ]
 
 HEROES = [
-    (1, "HODEIDAH · YEMEN", scene_port, NAVY,
-     "Coalition strikes hit Hodeidah port",
-     "Saudi-led coalition aircraft struck the port. Three Houthi "
-     "ballistic missiles were intercepted over Riyadh; the Houthis "
-     "say 41 killed in 24 hours. (wire reports)"),
-    (2, "COPENHAGEN · DENMARK", scene_plot, TEAL,
-     "Denmark charges two in Russian murder plot",
-     "Two Danes recruited by Russia to assassinate a US-Ukrainian "
-     "rapper, prosecutors say; Russia's defence attaché was "
-     "expelled. (BBC)"),
-    (3, "MERCURY · SPACE", scene_mercury, DARK,
-     "BepiColombo reaches Mercury at last",
-     "After an eight-year voyage since its 2018 launch, ESA's MPO "
-     "and JAXA's Mio enter orbit — the first dual-orbit Mercury "
-     "mission. (ESA)"),
+    {
+        "card": NAVY_CARD,
+        "scene": scene_port,
+        "headline": "COALITION BOMBS HODEIDAH PORT; MISSILES DOWNED OVER RIYADH",
+        "summary": "Saudi-led jets struck Yemen's Red Sea port as defences "
+                   "downed three Houthi ballistic missiles over Riyadh. "
+                   "The Houthis say 41 people were killed in 24 hours.",
+    },
+    {
+        "card": TEAL_CARD,
+        "scene": scene_denmark,
+        "headline": "DENMARK CHARGES TWO IN RUSSIAN PLOT TO KILL RAPPER",
+        "summary": "Two Danes are accused of being recruited by Russia to "
+                   "assassinate a US-Ukrainian rapper. Copenhagen has also "
+                   "expelled Russia's defence attaché.",
+    },
+    {
+        "card": DARK_CARD,
+        "scene": scene_mercury,
+        "headline": "BEPICOLOMBO REACHES MERCURY AFTER EIGHT-YEAR VOYAGE",
+        "summary": "ESA's MPO and JAXA's Mio slip into orbit around Mercury "
+                   "today, eight years after launch — the first mission to "
+                   "fly two orbiters around the planet.",
+    },
 ]
 
-CARDS = [
-    (4, "Zelenskyy rebukes Trump over Putin remark",
-     "Trump called Putin “a friend of mine” at Shenzhen; "
-     "Zelenskyy: “Putin is an enemy and a killer in our eyes.” "
-     "(reports)"),
-    (5, "Iran holds uranium red line, open to a deal",
-     "Tehran keeps its enrichment red line, but Araqchi wants "
-     "dialogue; Trump calls the terms unacceptable. (reports)"),
-    (6, "COP31 runs into overtime in Antalya",
-     "The fossil-fuel text is still deadlocked past the Friday "
-     "deadline as the summit overruns. (reports)"),
-    (7, "Nikhil Gupta sentenced to 235 months",
-     "US prison term for the plot to assassinate Sikh separatist "
-     "Gurpatwant Singh Pannun. (BBC)"),
-    (8, "Cancer pill daraxonrasib shows promise",
-     "Pancreatic tumours stopped growing in nearly all trial "
-     "patients and vanished in 1 in 12. (BBC, Guardian)"),
-    (9, "GTA VI weekend: police urge calm",
-     "US police departments warn players to “keep it in the "
-     "game” on launch weekend. (BBC)"),
-    (10, "Ukraine to send food aid to nine countries",
-     "Kyiv announces food-aid shipments to nine countries. "
-     "(wire reports)"),
-    (11, "Iraq arrests pipeline CEO in smuggling case",
-     "The petroleum-pipeline chief held over an oil-smuggling "
-     "network in Jurf al-Sakhar. (wire reports)"),
-    (12, "Bali daycare head jailed five years",
-     "Sentenced to five years in prison for child abuse at the "
-     "daycare she ran. (reports)"),
-    (13, "Kyiv reopens bridge hit in Friday's attack",
-     "The bridge damaged in Friday's barrage over the capital is "
-     "open to traffic again. (wire reports)"),
+STORIES = [
+    (4, icon_quote, RED,
+     "Zelenskyy: Putin 'an enemy and a killer'",
+     "Rebuking Trump for calling Putin 'a friend of mine' at Shenzhen."),
+    (5, icon_atom, (150, 96, 20),
+     "Iran holds red line, open to US deal",
+     "Enriched-uranium line held; Araqchi seeks talks, Trump says no."),
+    (6, icon_globe_clock, (12, 90, 90),
+     "COP31 deadlocked into overtime in Antalya",
+     "Fossil-fuel text still stuck past the Friday deadline."),
+    (7, icon_bars, NAVY,
+     "Gupta: 235 months for Pannun plot",
+     "US sentence for the plot to kill Sikh separatist Pannun."),
+    (8, icon_capsule, (170, 40, 90),
+     "Cancer pill halts pancreatic tumours",
+     "Daraxonrasib stopped tumours growing in nearly all patients; "
+     "gone in 1 in 12."),
+    (9, icon_gamepad, (90, 60, 140),
+     "GTA VI: police say keep it in the game",
+     "US departments issue warnings on the launch weekend."),
+    (10, icon_wheat, (146, 110, 20),
+     "Ukraine to send food aid to nine countries",
+     "Kyiv pledges grain shipments to nine nations in need."),
+    (11, icon_pumpjack, (100, 70, 40),
+     "Pipeline CEO arrested over oil smuggling",
+     "Iraq's petroleum chief held over a network at Jurf al-Sakhar."),
+    (12, icon_gavel, (120, 50, 50),
+     "Bali daycare head jailed for abuse",
+     "Sentenced to five years for child abuse at the daycare."),
+    (13, icon_bridge, (40, 100, 130),
+     "Kyiv reopens bridge hit Friday",
+     "The bridge damaged in Friday's attack is back in use."),
 ]
 
-ALSO = [
-    ("Hodeidah", "UN warns strikes threaten the aid lifeline", "UN"),
-    ("Moscow", "Russia denies the Copenhagen plot", "reports"),
-    ("Washington", "US declassifies more Middle East UFO footage",
-     "BBC"),
-    ("US", "birds die in a blaze at a foie gras farm", "BBC"),
-    ("Conakry", "Guinea bans a Burkina Faso broadcaster",
-     "France 24"),
-    ("The Hague", "Warden interceptor missile costs €30,000",
-     "reports"),
-    ("Riyadh", "storm warnings for Jazan and Najran",
-     "Saudi Gazette"),
-    ("Rome", "court orders a Ukrainian child returned", "reports"),
-    ("Kyiv", "Russia lost 1,410 troops in a day", "Gen. Staff"),
-    ("Moscow", "Russia says it downed drones overnight", "MoD"),
-    ("Kathmandu", "PM Balendra Shah faces his first India test",
-     "BBC"),
-    ("Wellington", "Test day 3: India resume reply to 368",
-     "reports"),
-    ("Washington", "second judge blocks Trump's planned arch",
-     "reports"),
-    ("Europe", "cost-of-living protests sweep cities", "BBC"),
-    ("Washington", "Trump threatens to bar overseas AI data centres",
-     "BBC"),
-    ("Antalya", "Turkey banks hosting deals as COP31 stalls",
-     "reports"),
-    ("Mercury", "BepiColombo orbiters split on 9–10 Dec", "ESA"),
+ALSO_LEFT = [
+    "UN warns Hudaydah strikes threaten Yemen's aid lifeline",
+    "Russia denies the Copenhagen plot",
+    "US declassifies more UFO footage from the Middle East",
+    "Birds die in a blaze at a large US foie gras farm",
+    "Guinea bans a Burkina Faso broadcaster",
+    "Dutch Warden interceptor missile costs ~€30,000",
+    "Saudi civil defence warns of storms over Jazan and Najran",
+    "Italian court orders a Ukrainian child returned in a custody ruling",
+    "Kyiv says Russia lost 1,410 troops in a day",
 ]
 
-DATE_CHECK = ("Left out as wrong-day news: the Kyiv bridge barrage, "
-              "Cyclone Akvan's Odisha landfall and the Wall Street AI "
-              "correction (all Friday), Mongolia's president resigning "
-              "(Thursday) and the Riemann-hypothesis claim (Friday) "
-              "— big stories, but not Saturday's.")
+ALSO_RIGHT = [
+    "Russia says it downed Ukrainian drones overnight",
+    "Nepal's new PM Balendra Shah faces his first India test",
+    "Wellington Test day 3: India resume their reply to 368",
+    "A second US judge blocks Trump's planned arch as a rushed job",
+    "Cost-of-living protests sweep European cities",
+    "Trump threatens to bar US firms from building AI data centres overseas",
+    "Turkey banks hosting agreements as COP31 stalls",
+    "BepiColombo's two orbiters separate 9–10 December",
+]
 
-FOOTER = ("Every story here happened, or was first reported, on "
-          "Saturday 21 November 2026. Sources named beside each "
-          "story · original drawings.")
+REGION_LINE = ("Europe 10 · Asia 4 · Middle East 5 · Africa 1 · "
+               "Americas 7 · Oceania 1 · Space 2 — 30 stories in all")
+
+DATE_CHECK = ("Not Saturday: the Kyiv bridge barrage (Fri) · Cyclone "
+              "Akvan's Odisha landfall (Fri) · the Wall Street AI "
+              "correction (Fri) · Mongolia's president resigning (Thu) · "
+              "the Riemann-hypothesis claim (Fri)")
+
+FOOTER = ("The World in One Day — Saturday 21 November 2026 · Every story "
+          "verified against at least two sources dated Saturday "
+          "21 November 2026.")
 
 
-# ---------------------------------------------------------------- page
-def build():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
+# ---------------------------------------------------------------- build
 
-    # Masthead
-    d.rectangle([0, 0, W, 8], fill=INK)
-    spaced(d, (M, 16), "THE WORLD IN ONE DAY", font(SB, 21), RED, 5)
-    d.text((W - M, 16), "GLOBAL NEWS BRIEF", font=font(SB, 20),
-           fill=GREY, anchor="ra")
-    date_text = "SATURDAY 21 NOVEMBER 2026"
-    size = 64
-    while d.textlength(date_text, font=font(FB, size)) > CW:
-        size -= 2
-    d.text((W / 2, 42), date_text, font=font(FB, size), fill=INK,
-           anchor="ma")
-    y = 42 + size + 10
-    d.line([M, y, W - M, y], fill=INK, width=5)
-    d.line([M, y + 7, W - M, y + 7], fill=INK, width=2)
-    y += 15
+def build_page():
+    page = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
+    d = ImageDraw.Draw(page)
+    cx = PAGE_W // 2
 
-    # Stats strip
-    sh = 58
-    d.rectangle([M, y, W - M, y + sh], fill=NAVY)
-    cell = CW / 6
-    lab_f = font(SR, 11)
-    for i, (num, label) in enumerate(STATS):
-        cx = M + i * cell
+    # masthead
+    draw_tracked(d, cx, 14, "THE WORLD IN ONE DAY",
+                 font(SANS_BOLD, 40), RED, 7)
+    draw_tracked(d, cx, 63, "GLOBAL NEWS BRIEF",
+                 font(SANS, 19), FAINT, 9)
+    d.line([MARGIN, 93, CONTENT_R, 93], fill=INK, width=3)
+    d.line([MARGIN, 98, CONTENT_R, 98], fill=INK, width=1)
+    draw_centered(d, cx, 107, "SATURDAY 21 NOVEMBER 2026",
+                  font(SERIF_BOLD, 44), INK)
+
+    # stats strip: six figures in gold on navy
+    strip_y, strip_h = 163, 50
+    d.rectangle([MARGIN, strip_y, CONTENT_R, strip_y + strip_h], fill=NAVY)
+    col_w = (CONTENT_R - MARGIN) / 6
+    stat_font = font(SANS_BOLD, 13)
+    for i, stat in enumerate(STATS):
+        col_cx = MARGIN + col_w * (i + 0.5)
+        lines = wrap(d, stat, stat_font, col_w - 16)
+        ty = strip_y + (strip_h - len(lines) * 16) / 2
+        for line in lines:
+            draw_centered(d, col_cx, ty, line, stat_font, GOLD)
+            ty += 16
         if i:
-            d.line([cx, y + 8, cx, y + sh - 8], fill=(70, 96, 140),
-                   width=1)
-        d.text((cx + cell / 2, y + 5), num, font=font(SB, 23),
-               fill=GOLD, anchor="ma")
-        ly = y + 33
-        for ln in wrap(d, label, lab_f, cell - 12)[:2]:
-            d.text((cx + cell / 2, ly), ln, font=lab_f,
-                   fill=(225, 232, 245), anchor="ma")
-            ly += 12
-    y += sh + 7
+            sx = MARGIN + col_w * i
+            d.line([sx, strip_y + 8, sx, strip_y + strip_h - 8],
+                   fill=(74, 90, 128), width=1)
 
-    # Heroes
-    hh = 212
-    hw = (CW - 22) // 3
-    for i, (num, kicker, scene, bg, head, body) in enumerate(HEROES):
-        hx = M + i * (hw + 11)
-        d.rounded_rectangle([hx, y, hx + hw, y + hh], 10, fill=bg)
-        scene(d, hx + 10, y + 8, hw - 20, 56)
-        chip(d, hx + 24, y + 24, num)
-        d.text((hx + 16, y + 70), kicker, font=font(SB, 13),
-               fill=(160, 190, 235))
-        y_end = text_block(d, (hx + 16, y + 88), head, font(FB, 19),
-                           (255, 255, 255), hw - 32, leading=1.05,
-                           max_lines=2)
-        text_block(d, (hx + 16, y_end + 3), body, font(SR, 13),
-                   LIGHT, hw - 32, leading=1.1, max_lines=4)
-    y += hh + 7
+    # hero cards
+    hero_y, hero_h, hero_w = 221, 276, 314
+    head_font = font(SANS_BOLD, 16)
+    sum_font = font(SANS, 13)
+    for i, hero in enumerate(HEROES):
+        hx = MARGIN + i * (hero_w + 13)
+        d.rectangle([hx, hero_y, hx + hero_w, hero_y + hero_h],
+                    fill=hero["card"])
+        hero["scene"](page, hx + 10, hero_y + 10, hero_w - 20, 120)
+        d = ImageDraw.Draw(page)
+        ty = hero_y + 140
+        for line in wrap(d, hero["headline"], head_font, hero_w - 24):
+            d.text((hx + 12, ty), line, font=head_font, fill=WHITE)
+            ty += 20
+        ty += 5
+        for line in wrap(d, hero["summary"], sum_font, hero_w - 24):
+            d.text((hx + 12, ty), line, font=sum_font, fill=(228, 232, 240))
+            ty += 16
 
-    # Numbered cards, 2 x 5
-    chh, cgap = 56, 5
-    cw2 = (CW - cgap) // 2
-    for i, (num, head, body) in enumerate(CARDS):
-        cx = M + (i % 2) * (cw2 + cgap)
-        cy = y + (i // 2) * (chh + cgap)
-        d.rounded_rectangle([cx, cy, cx + cw2, cy + chh], 8, fill=CARD,
-                            outline=LINE, width=2)
-        chip(d, cx + 26, cy + chh // 2, num, fill=NAVY)
-        icon = ICONS.get(num)
-        if icon:
-            icon(d, cx + 48, cy + 6)
-        tx = cx + 96
-        tw = cw2 - 96 - 12
-        y_end = text_block(d, (tx, cy + 6), head, font(SB, 15), INK,
-                           tw, leading=1.05, max_lines=1)
-        text_block(d, (tx, y_end + 2), body, font(SR, 12), GREY, tw,
-                   leading=1.08, max_lines=2)
-    y += 5 * chh + 4 * cgap + 7
+    # numbered story cards, two rows of five
+    card_w, card_h = 184, 132
+    card_head = font(SANS_BOLD, 13)
+    card_body = font(SANS, 11)
+    num_font = font(SANS_BOLD, 15)
+    for idx, (num, icon, colour, headline, body) in enumerate(STORIES):
+        row, col = divmod(idx, 5)
+        x = MARGIN + col * (card_w + 12)
+        y = 505 + row * (card_h + 8)
+        d.rounded_rectangle([x, y, x + card_w, y + card_h], radius=6,
+                            fill=CARD_BG, outline=CARD_LINE, width=1)
+        icon(page, x + 32, y + 30, colour)
+        d = ImageDraw.Draw(page)
+        label = str(num)
+        d.text((x + card_w - 12 - text_w(d, label, num_font), y + 8),
+               label, font=num_font, fill=RED)
+        ty = y + 57
+        for line in wrap(d, headline, card_head, card_w - 20):
+            d.text((x + 10, ty), line, font=card_head, fill=INK)
+            ty += 15.5
+        ty += 3
+        for line in wrap(d, body, card_body, card_w - 20):
+            d.text((x + 10, ty), line, font=card_body, fill=(70, 63, 52))
+            ty += 12.5
 
-    # Region strip
-    rh = 36
-    d.rectangle([M, y, W - M, y + rh], fill=BAND)
-    d.text((M + 14, y + rh / 2), "WHERE IT HAPPENED", font=font(SB, 14),
-           fill=RED, anchor="lm")
-    d.text((M + 218, y + rh / 2),
-           "Europe 10  ·  Asia 4  ·  Middle East 5  ·  Africa 1  ·  "
-           "Americas 7  ·  Oceania 1  ·  Space 2",
-           font=font(SR, 15), fill=INK, anchor="lm")
-    d.text((W - M - 14, y + rh / 2), "30 stories in all",
-           font=font(SB, 14), fill=NAVY, anchor="rm")
-    y += rh + 7
+    return page
 
-    # Also on Saturday: two columns of one-liners
-    also_head = "ALSO ON SATURDAY"
-    d.text((M, y), also_head, font=font(SB, 16), fill=RED)
-    lx = M + d.textlength(also_head, font=font(SB, 16)) + 14
-    d.line([lx, y + 10, W - M, y + 10], fill=LINE, width=2)
-    y += 23
-    colw = (CW - 28) // 2
-    per_col = (len(ALSO) + 1) // 2
-    fb13, fr13 = font(SB, 13), font(SR, 13)
-    for j, (city, text, src) in enumerate(ALSO):
-        ax = M + (j // per_col) * (colw + 28)
-        ay = y + (j % per_col) * 15
-        d.text((ax, ay), city, font=fb13, fill=INK)
-        x2 = ax + d.textlength(city, font=fb13)
-        rest = " — " + text + " "
-        d.text((x2, ay), rest, font=fr13, fill=INK)
-        x3 = x2 + d.textlength(rest, font=fr13)
-        d.text((x3, ay), "(" + src + ")", font=fr13, fill=GREY)
-    y += per_col * 15 + 5
 
-    # Date check strip
-    bh = 54
-    d.rounded_rectangle([M, y, W - M, y + bh], 8, fill=TINT,
-                        outline=RED, width=3)
-    d.text((M + 14, y + 9), "DATE CHECK", font=font(SB, 13), fill=RED)
-    text_block(d, (M + 118, y + 9), DATE_CHECK, font(SR, 13), INK,
-               CW - 118 - 14, leading=1.12, max_lines=3)
-    y += bh + 7
+def finish_page(page):
+    d = ImageDraw.Draw(page)
 
-    # Footer
-    d.line([M, y, W - M, y], fill=INK, width=2)
-    d.text((W / 2, y + 6), FOOTER, font=font(SI, 12), fill=GREY,
-           anchor="ma")
-    return img
+    # region tally on a beige band
+    band_y = 785
+    d.rectangle([MARGIN, band_y, CONTENT_R, band_y + 26], fill=BEIGE)
+    draw_centered(d, PAGE_W // 2, band_y + 5, REGION_LINE,
+                  font(SANS_BOLD, 13), INK)
+
+    # also on Saturday: two columns of one-liners
+    also_head = font(SANS_BOLD, 15)
+    d.text((MARGIN, 819), "ALSO ON SATURDAY", font=also_head, fill=RED)
+    head_w = text_w(d, "ALSO ON SATURDAY", also_head)
+    d.line([MARGIN + head_w + 12, 827, CONTENT_R, 827], fill=CARD_LINE,
+           width=1)
+    item_font = font(SANS, 11)
+    for col_x, items in ((MARGIN, ALSO_LEFT), (526, ALSO_RIGHT)):
+        ty = 843
+        for item in items:
+            d.text((col_x, ty), "·  " + item, font=item_font, fill=INK)
+            ty += 13
+
+    # date check: the wrong-day stories this page deliberately leaves out
+    dc_y = 964
+    d.rectangle([MARGIN, dc_y, CONTENT_R, dc_y + 30], fill=DATE_BG,
+                outline=RED, width=2)
+    d.text((MARGIN + 12, dc_y + 8), "DATE CHECK", font=font(SANS_BOLD, 12),
+           fill=RED)
+    dc_font = font(SANS, 11)
+    ty = dc_y + 3
+    for line in wrap(d, DATE_CHECK, dc_font, CONTENT_R - MARGIN - 140):
+        d.text((MARGIN + 128, ty), line, font=dc_font, fill=INK)
+        ty += 13
+
+    # footer
+    draw_centered(d, PAGE_W // 2, 1000, FOOTER, font(SERIF_ITALIC, 13),
+                  FAINT)
+    return page
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    out = os.path.join(here, "entry.png")
-    img = build()
-    img.save(out, optimize=True)
-    size = os.path.getsize(out)
-    with open(out, "rb") as f:
-        magic = f.read(8)
-    if magic[:4] != b"\x89PNG" and magic[:2] != b"\xff\xd8":
-        raise SystemExit("output is not a PNG or JPEG")
-    print(f"wrote {out} ({size} bytes)")
+    import os
+
+    page = finish_page(build_page())
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "entry.png")
+    page.save(out, format="PNG")
+    print("wrote", out, os.path.getsize(out), "bytes")
 
 
 if __name__ == "__main__":
