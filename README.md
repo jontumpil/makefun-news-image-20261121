@@ -3,8 +3,9 @@
 A make.fun **news-image-20261121** entry by **@jontumpil**: one image that
 sums up the world news of Saturday 21 November 2026.
 
-[![Competition: news-image-20261121](https://img.shields.io/badge/make.fun-news--image--20261121-blue)](https://make.fun/bounty/news-image-20261121)
-[![Repository](https://img.shields.io/badge/GitHub-jontumpil%2Fmakefun--news--image--20261121-green)](https://github.com/jontumpil/makefun-news-image-20261121)
+[![make.fun · news-image-20261121](https://make.fun/badge/news-image-20261121.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
+[![rank](https://make.fun/badge/news-image-20261121/jontumpil/makefun-news-image-20261121/rank.svg)](https://make.fun/bounty/news-image-20261121/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
+[![reward](https://make.fun/badge/news-image-20261121/jontumpil/makefun-news-image-20261121/reward.svg)](https://make.fun/bounty/news-image-20261121?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261121)
 
 The page is a one-sheet newspaper. A masthead and six key figures sit
 above three illustrated hero stories — the coalition strikes on Hodeidah
